@@ -204,13 +204,20 @@ async function resolveSeries(anilistId, ctx = {}) {
       for (const candidate of await search(query)) if (!discovered.has(candidate.slug)) discovered.set(candidate.slug, candidate);
     } catch {}
   }));
+  if (!discovered.size) throw new Error(`AniZone: no results for AniList ${anilistId} (title not on site)`);
   const valid = [...discovered.values()]
     .map((candidate) => validateCandidate(candidate, media, titles, expected))
     .filter(Boolean)
     .sort((left, right) => right.score - left.score);
+  if (!valid.length) throw new Error(`AniZone: no matching title found for AniList ${anilistId}`);
   const selected = valid[0];
   const runnerUp = valid[1];
-  if (!selected || selected.score < 0.82 || runnerUp && selected.score - runnerUp.score < 0.08) {
+  const accepted =
+    selected &&
+    (selected.titleScore >= 0.85 ||
+      selected.score >= 0.82 ||
+      (!runnerUp && selected.score >= 0.74));
+  if (!accepted) {
     throw new Error(`AniZone match not confident for AniList ${anilistId}`);
   }
   const data = {

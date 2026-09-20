@@ -18,15 +18,23 @@ const HLS_BASE = "https://hls.krussdomi.com/manifest";
 const UA       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 const H        = { "User-Agent": UA, Accept: "application/json" };
 
-async function kaaSearch(query) {
-  const res = await fetch(`${BASE}/api/fsearch`, {
-    method: "POST",
-    headers: { ...H, "Content-Type": "application/json" },
-    body: JSON.stringify({ page: 1, query }),
-  });
-  if (!res.ok) throw new Error(`kaa fsearch HTTP ${res.status}`);
-  const data = await res.json();
-  return Array.isArray(data?.result) ? data.result : [];
+async function kaaSearch(query, attempt = 1) {
+  try {
+    const res = await fetch(`${BASE}/api/fsearch`, {
+      method: "POST",
+      headers: { ...H, "Content-Type": "application/json" },
+      body: JSON.stringify({ page: 1, query }),
+    });
+    if (!res.ok) throw new Error(`kaa fsearch HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data?.result) ? data.result : [];
+  } catch (err) {
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      return kaaSearch(query, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 async function kaaShowInfo(showSlug) {

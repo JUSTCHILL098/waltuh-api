@@ -178,21 +178,33 @@ function titleScore(titles, candidate) {
 async function inspectCandidate(candidate) {
   const contentId = String(candidate?.content_id || "");
   if (!contentId) return null;
+  let metadata = null;
   try {
     const video = await apiJson(`/v4/content/${encodeURIComponent(contentId)}/video/1`);
-    const metadata = video?.metadata;
-    if (!metadata) return null;
-    return {
-      contentId,
-      title: candidate.content_title_en || candidate.content_title || "",
-      candidate,
-      malId: Number(metadata.mal_id) || null,
-      episodeCount: Number(metadata.total_episodes) || 0,
-      isMovie: Boolean(metadata.is_movie),
-    };
-  } catch {
-    return null;
+    metadata = video?.metadata;
+  } catch {}
+  if (!metadata) {
+    try {
+      const detail = await apiJson(`/v4/content/${encodeURIComponent(contentId)}`);
+      metadata = detail?.metadata;
+    } catch {}
   }
+  if (!metadata) {
+    try {
+      const episodes = await apiJson(`/v4/content/${encodeURIComponent(contentId)}/episodes`);
+      const count = Object.keys(episodes ?? {}).length;
+      if (count > 0) metadata = { total_episodes: count };
+    } catch {}
+  }
+  if (!metadata) return null;
+  return {
+    contentId,
+    title: candidate.content_title_en || candidate.content_title || "",
+    candidate,
+    malId: Number(metadata.mal_id) || null,
+    episodeCount: Number(metadata.total_episodes) || 0,
+    isMovie: Boolean(metadata.is_movie),
+  };
 }
 
 function coverageScore(episodeCount, expected) {
@@ -244,6 +256,7 @@ async function resolveSeries(anilistId, ctx = {}) {
     .sort((left, right) => right.score - left.score)
     .slice(0, 14)
     .map((item) => item.candidate);
+  if (!discovered.size || !shortlist.length) throw new Error(`AnimeOnsen: no results for AniList ${anilistId} (title likely not on site)`);
   const inspected = (await Promise.all(shortlist.map(inspectCandidate))).filter(Boolean);
   const expectedMalId = Number(media?.idMal) || null;
   const exact = expectedMalId
@@ -255,7 +268,13 @@ async function resolveSeries(anilistId, ctx = {}) {
     .sort((left, right) => right.score - left.score);
   const selected = validated[0];
   const runnerUp = validated[1];
-  if (!selected || (!exact.length && (selected.score < 0.82 || runnerUp && selected.score - runnerUp.score < 0.08))) {
+  const accepted =
+    selected &&
+    (exact.length ||
+      selected.titleScore >= 0.85 ||
+      selected.score >= 0.78 ||
+      (!runnerUp && selected.score >= 0.72));
+  if (!accepted) {
     throw new Error(`AnimeOnsen match not confident for AniList ${anilistId}`);
   }
   const data = {
