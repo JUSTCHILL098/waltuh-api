@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import worker from "./index.js";
+import { installProxyFetch, startProxyPool } from "./core/proxy-pool.js";
+
+installProxyFetch();
+startProxyPool();
 
 const PORT  = Number(process.env.PORT) || 4000;
 const BASE  = process.env.BASE_PATH ?? "";

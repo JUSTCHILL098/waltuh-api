@@ -2,6 +2,7 @@ import child_process from "node:child_process";
 import { json, episodeMeta } from "../core/new-provider-utils.js";
 import { getMedia } from "../core/anilist.js";
 import { get as cacheGet, set as cacheSet, isFresh, SHOW_IDENTITY_TTL } from "../core/smartcache.js";
+import { getHealthyProxy } from "../core/proxy-pool.js";
 
 const BASE = "https://anime-dunya.com";
 
@@ -17,14 +18,33 @@ async function resolveMalId(anilistId) {
   return media.idMal;
 }
 
+function curlArgs(proxy) {
+  if (!proxy) return "";
+  const url = String(proxy.url);
+  const scheme = url.match(/^([a-z0-9]+):\/\//)?.[1];
+  if (scheme === "http" || scheme === "https") return `--proxy "${url}"`;
+  if (scheme === "socks5") return `--socks5-hostname "${url.replace(/^socks5:\/\//, "")}"`;
+  if (scheme === "socks4") return `--socks4a "${url.replace(/^socks4:\/\//, "")}"`;
+  return "";
+}
+
 function fetchRaw(url) {
-  const cmd = `curl -s -L --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8" -H "Accept-Language: en-US,en;q=0.9" -w "\\n__STATUS__%{http_code}" "${url}"`;
-  const out = child_process.execSync(cmd, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
-  const match = String(out).match(/(?:^|\n)__STATUS__(\d{3})\s*$/);
-  return {
-    html: String(out).replace(/__STATUS__\d{3}\s*$/, ""),
-    status: match ? Number(match[1]) : null,
-  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const proxy = attempt === 1 ? getHealthyProxy() : null;
+    const cmd = `curl -s -L --max-time 25 ${curlArgs(proxy)} -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8" -H "Accept-Language: en-US,en;q=0.9" -w "\\n__STATUS__%{http_code}" "${url}"`;
+    try {
+      const out = child_process.execSync(cmd, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+      const match = String(out).match(/(?:^|\n)__STATUS__(\d{3})\s*$/);
+      const status = match ? Number(match[1]) : null;
+      const html = String(out).replace(/__STATUS__\d{3}\s*$/, "");
+      if (attempt === 0 && (status === null || status === 403 || status >= 500)) continue;
+      return { html, status };
+    } catch {
+      if (attempt === 0) continue;
+      return { html: "", status: null };
+    }
+  }
+  return { html: "", status: null };
 }
 
 function assertPage({ html, status, location }) {
