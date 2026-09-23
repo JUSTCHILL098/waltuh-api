@@ -10,6 +10,7 @@ const CONFIG = {
   validateMs: Number(process.env.PROXY_VALIDATE_TIMEOUT_MS) || 8000,
   revalidateMs: Number(process.env.PROXY_REVALIDATE_MS) || 5 * 60 * 1000,
   maxAttempts: Number(process.env.PROXY_MAX_ATTEMPTS) || 3,
+  topupMs: Number(process.env.PROXY_TOPUP_MS) || 90 * 1000,
   checkUrl: process.env.PROXY_IP_CHECK_URL || "http://api.iplocate.io/ip",
   disabled: ["0", "off", "false", "no"].includes(String(process.env.PROXY_POOL).toLowerCase()),
 };
@@ -200,9 +201,22 @@ export async function startProxyPool() {
       await validatePool();
     }, CONFIG.listTtlMs);
     if (STATE.timer.unref) STATE.timer.unref();
+    STATE.topupTimer = setInterval(() => {
+      if (STATE.healthy.length < CONFIG.maxHealthy) validatePool().catch(() => {});
+    }, CONFIG.topupMs);
+    if (STATE.topupTimer && STATE.topupTimer.unref) STATE.topupTimer.unref();
   })();
   await STATE.refreshPromise.catch(() => {});
   return Promise.resolve();
+}
+
+function expediteTopup() {
+  if (isDisabled() || STATE.expediting || STATE.healthy.length) return;
+  STATE.expediting = true;
+  setTimeout(() => {
+    STATE.expediting = false;
+    if (!STATE.healthy.length) validatePool().catch(() => {});
+  }, 1000);
 }
 
 export function getHealthyProxy() {
@@ -227,7 +241,10 @@ export function reportProxyFailure(key) {
 }
 
 export async function fetchViaProxy(url, options = {}) {
-  if (isDisabled() || !STATE.healthy.length) return null;
+  if (isDisabled() || !STATE.healthy.length) {
+    expediteTopup();
+    return null;
+  }
   const { headers, method = "GET", body } = options;
   const attempts = shuffled(STATE.healthy).slice(0, CONFIG.maxAttempts);
   for (const item of attempts) {
